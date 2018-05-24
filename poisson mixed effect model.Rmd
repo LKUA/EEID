@@ -1,0 +1,81 @@
+---
+title: "Poisson and binomial models in INLA"
+output: html_notebook
+---
+
+Our linear model last time was not a good fit for the data, because we have either count data (Poisson or negtaive binomial distribution) or we have binomal (proportion positive) data. So now, we fit a mixed effect model using poisson distribution
+
+
+```{r}
+library(tidyverse)
+library(INLA)
+
+bu<-read_csv("template_BU.csv")
+
+```
+
+When we include a dependency, we need some kind of grouping structure. We dont have one, so I add a random one. This just demonstrates how to code the model
+
+```{r}
+bu$Random<-NA
+bu$Random[1:45]<-"A"; bu$Random[46:200]<-"B"; bu$Random[201:295]<-"C"
+bu$Random<-as.factor(bu$Random)
+ggplot(bu)+geom_boxplot(aes(Random, BU_TOT))
+```
+
+In our scenario maybe Random is actually a grouping factor of who did the sampling or which lab anaysed the sample, therefore we may suspect that there is dependency.
+
+We will now apply a poisson model with dependency
+
+First, write the model - for no dependency:
+
+BU_TOT_i ~ Poissin(mu) - no hyperparameter
+E(BU_Tot_i) = mu_i
+Var(BU_Tot_i) = mu_i
+
+mu_i = e^Cov and it is a loglink. Because is e^Cov can only predict positive numbers
+
+First we will do with no dependency then will include dependency
+
+For model with dependency:
+BU_TOT_ij ~ Poissin(mu) - no hyperparameter
+E(BU_Tot_ij) = mu_ij
+Var(BU_Tot_ij) = mu_ij
+mu_ij         = Covariate stuff + a_i
+
+ where: 
+a_i ~ N(0, sigmaRandom^2)
+
+
+We now have a hyperparameter in the dependency model
+
+
+
+```{r}
+f0 <- BU_TOT ~ Forest + Precip_mm  + TOT_POP #no dependency
+
+#dependency
+f1 <- BU_TOT ~ Forest + Precip_mm  + TOT_POP +
+              f(Random, model = "iid")
+
+I0 <- inla(f0, 
+           control.compute = list(dic = TRUE),
+           control.predictor = list(compute = TRUE),
+           family = "poisson",
+           data = bu)
+
+I1 <- inla(f1, 
+           control.compute = list(dic = TRUE),
+           control.predictor = list(compute = TRUE),
+           family = "poisson",
+           data = bu)
+
+summary(I0)
+summary(I1)
+
+
+```
+
+For other types of dependency, see the INLA latent models page
+
+
