@@ -1,0 +1,256 @@
+---
+title: "Linear model in INLA"
+output: html_notebook
+---
+
+#Running a simple linear model in INLA
+
+```{r read in the data and plot}
+library(tidyverse)
+library(INLA)
+
+bu<-read_csv("template_BU.csv")
+
+head(bu)
+
+#plot total BU cases by each variable to see whether there is any relationsip
+
+for(i in 7:ncol(bu)){
+  varname<-names(bu)[i]
+  print(ggplot(bu)+geom_point(aes(bu[i], BU_TOT))+xlab(varname)+ylab("BU cases")+theme_classic())
+}
+```
+
+POssible relationships between forest cover and NDVI and BU cases, no relationship with urban or water, so dont use those. Maybe best to just use either agriculture or forest cover from th eland cover classes
+
+What we should do: Plot the data, check whether interactions are possible etc....but no time.
+
+First linear model as per lm (note that this WOULD NOT be the way to start analysing this data but we use it here solely to begin exploring INLA)
+
+```{r Frequentist LM}
+
+summary(lm1<-lm(log(BU_TOT+1)~TOT_POP+ Forest + Precip_mm , data = bu))
+plot(resid(lm1))
+
+```
+
+Now we will do the same thing in INLA
+
+First, what is our model?
+
+Bu_pos ~ N(mu, sigma2)
+E(Bu_pos) = mu 
+Var(Bu_pos) = sigma2  (ie the noise, epsilon)
+mu = B0 + B1*TOT_POP + B2*FOREST + B3*Precip_mm
+
+```{r Same model in INLA}
+bu$BU_TOT.l<-log(bu$BU_TOT+1)
+
+I1 <- inla(BU_TOT.l ~ TOT_POP+ Forest + Precip_mm,
+           data = bu,
+           family = "gaussian")
+summary(I1)
+
+I1$summary.fixed
+I1$summary.hyper
+
+round(I1$summary.fixed[, c("mean",
+                              "0.025quant",  
+                              "0.975quant")],2)
+```
+
+Looking at the output
+
+First you get information about hte time used for running the model - useful for sptial models that can take a while.
+
+model$summary.fixed gives the betas. 
+model$summary.hyper gives the precision for the observations (ie the sigma^2)
+
+You can access the entire distribution rather than just extrating the mean and the quantiles, and then plot this 
+
+```{r}
+beta2 <- I1$marginals.fixed$Forest
+beta2
+head(betaAge)
+
+plot(x = beta2[,1],y = beta2[,2],type = "l",xlab = expression(beta[2]),ylab = expression(paste("P(", beta[2] ," | Data)")))
+
+```
+
+Normally distributed 
+
+You can also use inla.qmarginal or inla.zmarginal to extract more qunatiles for specific betas (eg inla.zmarginal(beta2)) will return more quantiles for beta2
+
+For non normal distributions it is also useful to consider the interval within which 95% of the density lies:
+
+```{r}
+inla.hpdmarginal(0.95, beta2) 
+
+```
+
+There is no significant effect of forest cover on BU cases. Remember how shocking the residuals looked however - this is count data and we have logged it, plus there are clear patterns still.
+
+What about the information on the precision?
+Inla works with precision, tau, which = 1 / sigma^2
+
+need to convert back from tau, to sigma
+
+INLA has a support function which will do this:
+need to use inla.emarginal on tau with a square root
+if you want the distribution you use inla.tmarginal
+
+```{r}
+invsqrt <- function(x) {1 / sqrt(x) }
+
+tau<- I1$marginals.hyperpar$`Precision for the Gaussian observations`
+
+
+inla.emarginal(fun = invsqrt,marg = tau)
+sigma_dist<-inla.tmarginal(fun = invsqrt, marg = tau)
+plot(x = sigma_dist[,1], y = sigma_dist[,2],type = "l",xlab = expression(sigma),  ylab = expression(paste("P(", sigma ," | Data)")))
+```
+
+This was our sigma, and you can plot the distribution as well
+
+If you want to have fitted values, you need to tell inla this. This is necessary if you want to calculate residuals and predictions. This is done through the control.predictor command
+
+
+```{r}
+I2 <- inla(BU_TOT.l ~ TOT_POP+ Forest + Precip_mm,
+           control.predictor = list(compute = TRUE),
+           data = bu,
+           family = "gaussian")
+Fit2 <- I2$summary.fitted.values[,"mean"]
+head(Fit2)
+
+```
+
+Now you can calculate the residuals and do the same plot as we performed on the LM
+To do this, subtract the fitted values from the observed data, and this is your E
+
+```{r}
+  E2 <- bu$BU_TOT.l - Fit2
+plot(x = Fit2, 
+     y = E2, 
+     xlab = "Fitted values",
+     ylab = "Residuals")
+```
+
+
+Uh oh!
+
+There are of course a whole load of different model checks you should now run. We will skip because of time
+
+Finally, model selection is done using the DIC
+
+To calculate the DIC
+Again, need to set it as an option in the inla function
+
+```{r Setting the DIC}
+I3 <- inla(BU_TOT.l ~ TOT_POP+ Forest + Precip_mm,
+           control.predictor = list(compute = TRUE),
+           control.compute = list(dic = TRUE),
+           data = bu,
+           family = "gaussian")
+
+I3$dic$dic
+```
+
+Finally, lets predict from our model!
+
+First, we can predict from the lm using the "by hand" approach rather than predict
+
+We do this because there is no predict() for INLA so need to do it by hand
+
+
+
+```{r Predict from lm}
+# Create hte new dataset
+newdat<-data.frame(TOT_POP = rep(mean(bu$TOT_POP),100), Forest = seq(from = min(bu$Forest), to = max(bu$Forest),length.out = 100),Precip_mm = rep(mean(bu$Precip_mm),100))
+
+
+# convertto a design matrix.
+X    <- model.matrix(~ TOT_POP + Forest + Precip_mm, data = newdat)
+beta <- coef(lm1)
+
+# Now we can calculate fitted values and SEs:
+FittedVals <- X %*% beta
+SES <- sqrt(diag(X %*% vcov(lm1) %*% t(X)))
+newdat$mu    <- FittedVals               #Fitted values
+newdat$selow <- FittedVals - 1.96 * SES #Lower bound
+newdat$seup  <- FittedVals + 1.96 * SES #Upper bound
+head(newdat)
+
+# Or use: predict(M8, newdata = MyData, se = TRUE)
+
+ggplot()+geom_point(data = bu, aes( Forest, BU_TOT.l)) +
+  xlab("Forest cover")+ylab("Log BU cases") +
+  geom_line(data = newdat, aes(Forest, mu )) +
+  geom_ribbon(data = newdat, aes(Forest, ymax = seup, ymin = selow), fill = "red", alpha = 0.4) +
+  theme_classic()
+
+
+
+```
+
+
+
+
+As suspected - this model is very awful at predicting!
+
+What about from R-INLA?
+
+Two methods:
+
+1, take advantage of the fact that if R-INLA sees an NA it will predict for that variable
+2, use the r inla function make.lincombs
+
+Method 1: Make a load of extra rows that are NAs and inla will predict them
+
+```{r}
+#create a new dataset which includes a load of nas for our variable of interest
+
+newdat2<-data.frame(TOT_POP = rep(mean(bu$TOT_POP),100), Forest = seq(from = min(bu$Forest), to = max(bu$Forest),length.out = 100),Precip_mm = rep(mean(bu$Precip_mm),100),BU_TOT.l = rep(NA, 100))
+
+#combine with the orginal data
+bu%>%select(TOT_POP, Forest, Precip_mm, BU_TOT.l)%>%bind_rows(newdat2)->comb.data
+
+#rerun the model
+I4 <- inla(BU_TOT.l ~ TOT_POP + Forest,
+            control.predictor = list(
+                      compute = TRUE, 
+                      quantiles = c(0.025, 0.975)),
+            data = comb.data)
+
+I4$summary.fitted.values
+
+nrow(I4$summary.fitted.values) == nrow(comb.data)
+
+```
+
+
+Now have fitted values for the original data AND the new, predicted data
+We can now extract these and plot
+
+```{r}
+FIT <- I4$summary.fitted.values[296:395,] #the 100 extra roes we added
+
+# And add the relevant pieces to MyData 
+newdat$mu    <- FIT[,"mean"]       #Fitted values
+newdat$selow <- FIT[,"0.025quant"] #Lower bound
+newdat$seup  <- FIT[,"0.975quant"] #Upper bound
+
+ggplot()+geom_point(data = bu, aes( Forest, BU_TOT.l)) +
+  xlab("Forest cover")+ylab("Log BU cases") +
+  geom_line(data = newdat, aes(Forest, mu )) +
+  geom_ribbon(data = newdat, aes(Forest, ymax = seup, ymin = selow), fill = "red", alpha = 0.4) +
+  theme_classic()
+
+```
+
+Exactly the same as before, therefore with using default priors (which are diffuse), we get the same result as the frequentist approach
+
+
+
+
+
