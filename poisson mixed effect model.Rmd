@@ -78,4 +78,122 @@ summary(I1)
 
 For other types of dependency, see the INLA latent models page
 
+Final note - what if you want to see whether you have overdispersion?
 
+You can test this but another way is to fit a negative binomial model and inspect the variance parameter
+
+To fit a negative binomial model first we write the model
+
+BU_TOT~ NB(mu_i, theta)
+
+E(BU_TOT) = mu_i
+
+
+Var(BU_TOT) = mu_i + mu_i^2 /theta # variance can therefore increase with the mean
+
+
+```{r}
+f2 <- BU_TOT ~ Forest + Precip_mm  + TOT_POP + MeanNDVI + MeanTemp + ShrGra+
+              f(Random, model = "iid")
+
+
+I2 <- inla(f2, 
+           control.compute = list(dic = TRUE),
+           control.predictor = list(compute = TRUE),
+           family = "nbinomial",
+           data = bu)
+
+summary(I2)
+
+k.pd <- I2$marginals.hyperpar$`size for the nbinomial observations (1/overdispersion)`
+k.pm <- inla.emarginal(function(x) x, k.pd)
+k.pm #overdispersion parameter -not a problem
+```
+
+
+Lower DIC so is a better fitting model. CHeck the RInla help pages for details on teh likelihoods but it is sparse
+
+Finally, lets try a binomial model.
+
+Here we are going to treat BU cases as successes and the total population as the number of trials.
+
+Again, we start by writing the model
+
+BU_TOT_i ~ Bin(P_i,N_i)
+E(Dead_mites_i) = N_i*P_i (Number of trials * probability of event)
+var(Dead_Mites_i) = N_i*P_i*(1-P_i)
+
+P_i = exp(Covariates) / 1+exp(Covariates)
+
+```{r}
+
+f3 <- BU_TOT ~ Forest + Precip_mm  + MeanNDVI + MeanTemp + ShrGra
+TOT_POP<-bu$TOT_POP
+
+I3 <- inla(f3,
+           family = "binomial",
+           control.compute = list(dic = TRUE, waic = TRUE),
+           control.predictor = list(compute = TRUE),
+           Ntrials = TOT_POP, 
+           data = bu)
+summary(I3)
+
+#we have dropped the random effect here as its not useful for this model
+
+Pi   <- I3$summary.fitted.values[,"mean"] 
+ExpY <- Pi * bu$TOT_POP
+VarY <- bu$TOT_POP * Pi * (1 - Pi) 
+E1   <- (bu$BU_TOT - ExpY) / sqrt(VarY)
+N    <- nrow(bu)
+p <- nrow(I3$summary.fixed)
+Dispersion <- sum(E1^2) / (N - p)
+Dispersion
+
+```
+
+Plot from the model to check th residuals
+
+```{r}
+par(mfrow = c(1,1), mar = c(5,5,2,2), cex.lab = 1.5)
+plot(x = bu$BU_TOT,
+     y = E1,
+     xlab = "Total BU cases",
+     ylab = "Pearson residuals")
+abline(h = 0, lty = 2)     
+
+
+par(mfrow = c(1,1), mar = c(5,5,2,2), cex.lab = 1.5)
+plot(E1 ~ Forest, 
+        data = bu)
+abline(h = 0, lty = 2)     
+
+
+par(mfrow = c(1,1), mar = c(5,5,2,2), cex.lab = 1.5)
+plot(x = ExpY,
+     y = bu$BU_TOT,
+     xlab = "Fitted values",
+     ylab = "Number of BU cases")
+
+```
+
+Doesnt look great. Lets plot our mean and standard errors anyway. Very quick and dirty apprach
+
+```{r}
+round(I3$summary.fixed[, c("mean",
+                              "0.025quant",  
+                              "0.975quant")],2)->betas
+
+
+#Change the ros and headers as throws an error
+betas$Var <- rownames(betas)
+names(betas)<-c("Mean", "LowQ", "HiQ", "Var")
+
+
+ggplot(betas[2:6,])+geom_point(aes(Var, Mean))+geom_errorbar(aes(x = Var, ymax =  HiQ, ymin =  LowQ))+geom_hline(aes(yintercept = 0), col = 2, linetype = "dashed")+theme_classic()
+
+
+```
+
+Remove the intercept becuase it makes it hard to see the other variables.
+
+Going to continue with the binomial model.
