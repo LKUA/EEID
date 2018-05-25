@@ -10,6 +10,7 @@ Our linear model last time was not a good fit for the data, because we have eith
 library(tidyverse)
 library(INLA)
 
+
 bu<-read_csv("template_BU.csv")
 
 ```
@@ -107,7 +108,7 @@ summary(I2)
 
 k.pd <- I2$marginals.hyperpar$`size for the nbinomial observations (1/overdispersion)`
 k.pm <- inla.emarginal(function(x) x, k.pd)
-k.pm #overdispersion parameter -not a problem
+k.pm #overdispersion parameter -not a problem, maybe a bit low
 ```
 
 
@@ -120,8 +121,8 @@ Here we are going to treat BU cases as successes and the total population as the
 Again, we start by writing the model
 
 BU_TOT_i ~ Bin(P_i,N_i)
-E(Dead_mites_i) = N_i*P_i (Number of trials * probability of event)
-var(Dead_Mites_i) = N_i*P_i*(1-P_i)
+E(BU_TOT_i) = N_i*P_i (Number of trials * probability of event)
+var(BU_OT_i) = N_i*P_i*(1-P_i)
 
 P_i = exp(Covariates) / 1+exp(Covariates)
 
