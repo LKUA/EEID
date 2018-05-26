@@ -149,8 +149,6 @@ We change this in the control.family command:
 
 
 
-
-
 ```{r}
 I7 <- inla(f5, 
            control.compute = list(dic = TRUE),
@@ -288,4 +286,6 @@ ggplot(data.frame(Posterior.SigmaRand5))+geom_line(aes(x,y), col = "red")+geom_l
 Quite different!
 
 
-Another type of prior you may come across is so called penalised complexity priors. They are developing area and should be handled with caution. We will not discuss them further.
+Another type of prior you may come across is so called penalised complexity priors. These will appear when we discuss spatial autocorrelation
+
+
