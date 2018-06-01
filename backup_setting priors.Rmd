@@ -1,0 +1,291 @@
+---
+title: "Priors in R-INLA"
+output: html_notebook
+---
+
+So far used diffuse priors. Now need to think about how you change them in INLA.
+
+Using diffuse priors may be ok for simple models, or a single random effect but becomes more important if you want to include a number of random effects.
+
+We are going to continue with our BU model from before, using the  binomial mixed effects model to begin with. 
+
+
+Again we add our fake grouping variable. 
+
+```{r}
+library(tidyverse)
+library(INLA)
+
+
+bu<-read_csv("template_BU.csv")
+bu$Random<-NA
+bu$Random[1:45]<-"A"; bu$Random[46:200]<-"B"; bu$Random[201:295]<-"C"
+bu$Random<-as.factor(bu$Random)
+
+```
+
+First we run the model:
+
+BU_TOT~ NB(mu_i, theta)
+
+E(BU_TOT) = mu_i + a_i (our random effect)
+
+
+Var(BU_TOT) = mu_i + mu_i^2 /theta # variance can therefore increase with the mean
+
+
+
+
+
+
+```{r}
+f5 <- BU_TOT ~ Forest +  MeanNDVI + MeanTemp + ShrGra + f(Random, model = "iid")
+
+TOT_POP<-bu$TOT_POP #our n trials
+
+I5 <- inla(f5,
+           family = "binomial",
+           control.compute = list(dic = TRUE, waic = TRUE),
+           control.predictor = list(compute = TRUE),
+           Ntrials = TOT_POP, 
+           data = bu)
+summary(I5)
+```
+
+Now, imagine our colleagues who also work on this published a paper which suggested that in Togo proximity to forest had a negative effect on contracting BU, with a slope of -.31 and an se of 0.01. 
+
+As we are now Bayesian, lets include that prior knowledge in our model.
+
+Remember, INLA assumes that distributon for the betas is multivariate normal and independent ie N(mu, sigma^2).
+
+In order to update our knowledge about forests, mu = estimate for the slope from our colleagues, sigma^2 is the standard error
+
+So now, for forest we want to put a prior of (-0.31,0.01)
+
+BUT
+
+Inla uses precision, not sigma^2, so our first task is to convert from sigma^2 to precision (tau)
+
+tau = 1/sigma^2
+
+=1 / 0.01^2
+
+= 10000
+
+So for inla, our new prior for Forest is (-.31, 10000)
+
+And we specify this using control.fixed
+
+```{r}
+# Next we fit a model in which all fixed parameters
+f5 <- BU_TOT ~ Forest +  MeanNDVI + MeanTemp + ShrGra + f(Random, model = "iid")
+
+TOT_POP<-bu$TOT_POP #our n trials
+
+I6 <- inla(f5,
+           family = "binomial",
+           control.compute = list(dic = TRUE, waic = TRUE),
+           control.predictor = list(compute = TRUE),
+           control.fixed = list(
+             mean = list(
+               Forest = -0.31,
+               MeanNDVI = 0,
+               MeanTemp = 0,
+               ShrGra = 0 ),
+             prec = list(
+               Forest = 10000,
+               MeanNDVI = 0.001,
+               MeanTemp = 0.001,
+               ShrGra = 0.001
+             ),
+             mean.intercept = 0,
+             prec.intercept = 0
+           ),
+           Ntrials = TOT_POP, 
+           data = bu)
+summary(I6)
+
+round(I6$summary.fixed[, c("mean",
+                              "0.025quant",  
+                              "0.975quant")],2)->betas
+
+
+#Change the ros and headers as throws an error
+betas$Var <- rownames(betas)
+names(betas)<-c("Mean", "LowQ", "HiQ", "Var")
+
+
+ggplot(betas)+geom_point(aes(Var, Mean))+geom_errorbar(aes(x = Var, ymax =  HiQ, ymin =  LowQ))+geom_hline(aes(yintercept = 0), col = 2, linetype = "dashed")+theme_classic()
+
+
+```
+
+
+
+Now Forest has tiny confidence intervals because we used a precise prior. 
+
+Realistic? Well, probably not for this model :)
+
+What about hyper parameters? 
+
+This is more complicated and they often throw errors, so can take some fiddling.
+
+Recap on hyperparameters:
+
+These are eg the variances sigma2 (for the normal distribution), or theta (negative binomial), variance parameters from random effects, parameters from spatial correlation function.
+
+They must be positive, so cannot use the normal distribution for them. Instead use a distribution that is bounded at least by zero and 1/ infinity
+
+E.g Uniform distribution or gamma distribution.
+
+We have only got a hyperparameter for the random effect in the above model - if we were using normal distribution we would also have a prior for the residual variance.
+
+If we were to use say the normal or the negative binomial distribution for our data, we set the hyperparameter for sigma/ theta using control.family, the gamma distribution is a good choice. Inla uses the loggamma distribution (if interested in the maths behind this --> book or inla course will explain)
+
+e.g. going back to hte linear model below we will change the hyper parameter for theta to match the hyperparameter suggested by Carroll et al 2015 who carried out an extensive simulation study. Inla has a default prior on the precision parameter (the variance parameter) of 0.00005 for gamma. Carroll et al suggest that 0.5 may be better. 
+
+We change this in the control.family command:
+
+
+
+
+```{r}
+I7 <- inla(f5, 
+           control.compute = list(dic = TRUE),
+           control.predictor = list(compute = TRUE),
+           control.family = list( hyper = list(
+                                prec = list(
+                                  prior = "loggamma",
+                                  param = c(1, 0.5)))),
+           data = bu)
+
+summary(I7)
+```
+
+
+For negative binomial, that requires setting the theta parameter. 
+
+I8 <- inla(f5, 
+           control.compute = list(dic = TRUE),
+           control.predictor = list(compute = TRUE),
+           family = "nbinomial",
+           control.family = list( hyper = list(
+                                theta = list(
+                                  prior = "loggamma",
+                                  param = c(1, 0.5)))),
+           data = bu)
+
+
+#Priors on random effects
+
+What about setting hyperparameters for random effects?
+
+Set it in the random effects part of the code. For a random effect that is iid (independent and identically distributed) we assume normal distribution, in the below sample we update our precision prior (our sigma^2) to the one recommended by the Carroll et al 2015 paper.
+
+
+Our model again:
+
+BU_TOT_i ~ Bin(P_i,N_i)
+E(BU_i) = N_i*P_i (Number of trials * probability of event) + a_i (for the random variable)
+var(BU_i) = N_i*P_i*(1-P_i)
+
+P_i = exp(Covariates) / 1+exp(Covariates)
+
+
+ where: 
+a_i ~ N(0, sigmaRandom^2)  (our random effect)
+
+```{r}
+
+f9 <- BU_TOT ~ Forest +  MeanNDVI + MeanTemp + ShrGra + f(Random, model = "iid", hyper = list( prec = list(prior = "loggamma",param = c(1, 0.5))))
+
+TOT_POP<-bu$TOT_POP #our n trials
+
+I9 <- inla(f9,
+           family = "binomial",
+           control.compute = list(dic = TRUE, waic = TRUE),
+           control.predictor = list(compute = TRUE),
+           control.fixed = list(
+             mean = list(
+               Forest = -0.31,
+               MeanNDVI = 0,
+               MeanTemp = 0,
+               ShrGra = 0 ),
+             prec = list(
+               Forest = 10000,
+               MeanNDVI = 0.001,
+               MeanTemp = 0.001,
+               ShrGra = 0.001
+             ),
+             mean.intercept = 0,
+             prec.intercept = 0
+           ),
+           Ntrials = TOT_POP, 
+           data = bu)
+summary(I9)
+
+round(I9$summary.fixed[, c("mean",
+                              "0.025quant",  
+                              "0.975quant")],2)->betas
+
+
+#Change the ros and headers as throws an error
+betas$Var <- rownames(betas)
+names(betas)<-c("Mean", "LowQ", "HiQ", "Var")
+
+
+ggplot(betas)+geom_point(aes(Var, Mean))+geom_errorbar(aes(x = Var, ymax =  HiQ, ymin =  LowQ))+geom_hline(aes(yintercept = 0), col = 2, linetype = "dashed")+theme_classic()
+
+```
+
+In the above model we used informative priors for both our fixed effect "Forest" and our precision on the random effect "Random"
+
+lets have a look at how the priors change the interpretation
+
+Our two models we will compare are F5 and F9
+
+```{r}
+# Get the posterior distributions of tau and tau_Random
+# Model with standard settings
+
+#tau5     <- I5$marginals.hyperpar$`Precision for the Gaussian observations` = would include if was agaussian model
+tauRand5 <- I5$marginals.hyperpar$`Precision for Random`
+
+# Model with the gamma(1, 0.5) priors
+#tau9     <- I9$marginals.hyperpar$`Precision for the Gaussian observations` would include if was a gaussian model
+tauRand9 <- I9$marginals.hyperpar$`Precision for Random`
+
+
+
+# gamma(1, 0.0005) priors
+#sigma5     <- inla.emarginal(function(x) (1/sqrt(x)), tau5)
+sigmaRand5 <- inla.emarginal(function(x) (1/sqrt(x)),tauRand5)
+
+# gamma(1, 0.5) priors
+#sigma9     <- inla.emarginal(function(x) (1/sqrt(x)), tau9)
+sigmaRand9 <- inla.emarginal(function(x) (1/sqrt(x)),tauRand9)
+
+sigmaRand5; sigmaRand9
+
+# Sigma Rand is rather different for the gamma(1, 0.5) prior!
+
+# Instead of looking at a number, we can also draw the 
+# distributions of the sigmas. These are the 
+# distributions for the sigma of the response variable:
+
+# these are the distributions for sigma_Random
+Posterior.SigmaRand5<- inla.tmarginal(function(x) (1/sqrt(x)),tauRand5)
+Posterior.SigmaRand9 <- inla.tmarginal(function(x) (1/sqrt(x)),tauRand9)
+
+
+ggplot(data.frame(Posterior.SigmaRand5))+geom_line(aes(x,y), col = "red")+geom_line(data = data.frame(Posterior.SigmaRand9), aes(x,y), col = "blue")+ xlab(expression(paste("Pr(", sigma[Random], " | data)")))+theme_classic()
+
+
+```
+
+Quite different!
+
+
+Another type of prior you may come across is so called penalised complexity priors. These will appear when we discuss spatial autocorrelation
+
+
