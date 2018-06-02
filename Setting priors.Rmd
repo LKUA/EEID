@@ -122,7 +122,7 @@ ggplot(betas)+geom_point(aes(Var, Mean))+geom_errorbar(aes(x = Var, ymax =  HiQ,
 
 
 
-Now Forest has tiny confidence intervals because we used a precise prior. 
+Now "Forest" has tiny confidence intervals because we used a precise prior. 
 
 Realistic? Well, probably not for this model :)
 
@@ -132,17 +132,17 @@ This is more complicated and they often throw errors, so can take some fiddling.
 
 Recap on hyperparameters:
 
-These are eg the variances sigma2 (for the normal distribution), or theta (negative binomial), variance parameters from random effects, parameters from spatial correlation function.
+These are eg the variances sigma^2 (for the normal distribution), or theta (negative binomial), variance parameters from random effects, parameters from spatial correlation function.
 
-They must be positive, so cannot use the normal distribution for them. Instead use a distribution that is bounded at least by zero and 1/ infinity
+They must be positive, so cannot use the normal distribution for them. Instead use a distribution that is bounded at least by zero and 1 or infinity
 
 E.g Uniform distribution or gamma distribution.
 
 We have only got a hyperparameter for the random effect in the above model - if we were using normal distribution we would also have a prior for the residual variance.
 
-If we were to use say the normal or the negative binomial distribution for our data, we set the hyperparameter for sigma/ theta using control.family, the gamma distribution is a good choice. Inla uses the loggamma distribution (if interested in the maths behind this --> book or inla course will explain)
+If we were to use say the normal or the negative binomial distribution for our data, we set the hyperparameter for sigma/ theta using control.family, the gamma distribution is a good choice. Inla uses the loggamma distribution (if interested in the maths behind this --> either of the recommended books or inla course with Highland Statistics will explain more)
 
-e.g. going back to hte linear model below we will change the hyper parameter for theta to match the hyperparameter suggested by Carroll et al 2015 who carried out an extensive simulation study. Inla has a default prior on the precision parameter (the variance parameter) of 0.00005 for gamma. Carroll et al suggest that 0.5 may be better. 
+Going back to the linear model below, we will change the hyper parameter for theta to match the hyperparameter suggested by Carroll et al 2015 who carried out an extensive simulation study. Inla has a default prior on the precision parameter (the variance parameter) of 0.00005 for gamma. Carroll et al suggest that 0.5 may be better. 
 
 We change this in the control.family command:
 
@@ -186,7 +186,7 @@ Set it in the random effects part of the code. For a random effect that is iid (
 Our model again:
 
 BU_TOT_i ~ Bin(P_i,N_i)
-E(BU_i) = N_i*P_i (Number of trials * probability of event) + a_i (for the random variable)
+E(BU_i) = N_i * P_i (Number of trials * probability of event) + a_i (for the random variable)
 var(BU_i) = N_i*P_i*(1-P_i)
 
 P_i = exp(Covariates) / 1+exp(Covariates)
