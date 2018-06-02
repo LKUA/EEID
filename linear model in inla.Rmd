@@ -1,4 +1,4 @@
----
+ ---
 title: "Linear model in INLA"
 output: html_notebook
 ---
@@ -42,7 +42,7 @@ First, what is our model?
 Bu_pos ~ N(mu, sigma2)
 E(Bu_pos) = mu 
 Var(Bu_pos) = sigma2  (ie the noise, epsilon)
-mu = B0 + B1*TOT_POP + B2*FOREST + B3*Precip_mm
+mu = B0 + B1 *TOT_POP + B2 * FOREST + B3*Precip_mm
 
 ```{r Same model in INLA}
 bu$BU_TOT.l<-log(bu$BU_TOT+1)
@@ -62,10 +62,10 @@ round(I1$summary.fixed[, c("mean",
 
 Looking at the output
 
-First you get information about hte time used for running the model - useful for sptial models that can take a while.
+First you get information about the time used for running the model - useful for spatial models that can take a while.
 
-model$summary.fixed gives the betas. 
-model$summary.hyper gives the precision for the observations (ie the sigma^2)
+"model$summary.fixed" gives the betas.   
+"model$summary.hyper" gives the precision for the observations (ie the sigma^2)
 
 You can access the entire distribution rather than just extrating the mean and the quantiles, and then plot this 
 
