@@ -15,13 +15,13 @@ bu<-read_csv("template_BU.csv")
 
 ```
 
-When we include a dependency, we need some kind of grouping structure. We dont have one, so I add a random one. This just demonstrates how to code the model
+When we include a dependency, we need some kind of grouping structure. We dont have one, so I add a random one. This just demonstrates how to code the factor
 
 ```{r}
 bu$Random<-NA
 bu$Random[1:45]<-"A"; bu$Random[46:200]<-"B"; bu$Random[201:295]<-"C"
 bu$Random<-as.factor(bu$Random)
-ggplot(bu)+geom_boxplot(aes(Random, BU_TOT))
+ggplot(bu)+geom_boxplot(aes(Random, BU_TOT))+theme_classic()
 ```
 
 In our scenario maybe Random is actually a grouping factor of who did the sampling or which lab anaysed the sample, therefore we may suspect that there is dependency.
@@ -30,19 +30,19 @@ We will now apply a poisson model with dependency
 
 First, write the model - for no dependency:
 
-BU_TOT_i ~ Poissin(mu) - no hyperparameter
-E(BU_Tot_i) = mu_i
-Var(BU_Tot_i) = mu_i
+BU_TOT_i ~ Poissin(mu) - no hyperparameter    
+E(BU_Tot_i) = mu_i    
+Var(BU_Tot_i) = mu_i    
 
 mu_i = e^Cov and it is a loglink. Because is e^Cov can only predict positive numbers
 
 First we will do with no dependency then will include dependency
 
 For model with dependency:
-BU_TOT_ij ~ Poissin(mu) - no hyperparameter
-E(BU_Tot_ij) = mu_ij
-Var(BU_Tot_ij) = mu_ij
-mu_ij         = Covariate stuff + a_i
+BU_TOT_ij ~ Poissin(mu) - no hyperparameter    
+E(BU_Tot_ij) = mu_ij    
+Var(BU_Tot_ij) = mu_ij    
+mu_ij         = Covariate stuff + a_i    
 
  where: 
 a_i ~ N(0, sigmaRandom^2)
@@ -112,7 +112,7 @@ k.pm #overdispersion parameter -not a problem, maybe a bit low
 ```
 
 
-Lower DIC so is a better fitting model. CHeck the RInla help pages for details on teh likelihoods but it is sparse
+Lower DIC so would suggest this is a better fitting model, however we haven't done any residual checks which of course is essential. Check the RInla help pages for details on the likelihoods but it is sparse
 
 Finally, lets try a binomial model.
 
@@ -121,8 +121,8 @@ Here we are going to treat BU cases as successes and the total population as the
 Again, we start by writing the model
 
 BU_TOT_i ~ Bin(P_i,N_i)
-E(BU_TOT_i) = N_i*P_i (Number of trials * probability of event)
-var(BU_OT_i) = N_i*P_i*(1-P_i)
+E(BU_TOT_i) = N_i * P_i (Number of trials * probability of event)
+var(BU_OT_i) = N_i * P_i * (1-P_i)
 
 P_i = exp(Covariates) / 1+exp(Covariates)
 
@@ -152,7 +152,7 @@ Dispersion
 
 ```
 
-Plot from the model to check th residuals
+Plot from the model to check the residuals
 
 ```{r}
 par(mfrow = c(1,1), mar = c(5,5,2,2), cex.lab = 1.5)
@@ -195,6 +195,6 @@ ggplot(betas[2:6,])+geom_point(aes(Var, Mean))+geom_errorbar(aes(x = Var, ymax =
 
 ```
 
-Remove the intercept becuase it makes it hard to see the other variables.
+Remove the intercept because it makes it hard to see the other variables.
 
 Going to continue with the binomial model.
