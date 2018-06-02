@@ -27,6 +27,7 @@ What we should do: Plot the data, check whether interactions are possible etc...
 
 First linear model as per lm (note that this WOULD NOT be the way to start analysing this data but we use it here solely to begin exploring INLA)
 
+
 ```{r Frequentist LM}
 
 summary(lm1<-lm(log(BU_TOT+1)~TOT_POP+ Forest + Precip_mm , data = bu))
@@ -71,13 +72,13 @@ You can access the entire distribution rather than just extrating the mean and t
 ```{r}
 beta2 <- I1$marginals.fixed$Forest
 beta2
-head(betaAge)
+head(beta2)
 
 plot(x = beta2[,1],y = beta2[,2],type = "l",xlab = expression(beta[2]),ylab = expression(paste("P(", beta[2] ," | Data)")))
 
 ```
 
-Normally distributed 
+Normally distributed (what we assume distribution of betas to be)
 
 You can also use inla.qmarginal or inla.zmarginal to extract more qunatiles for specific betas (eg inla.zmarginal(beta2)) will return more quantiles for beta2
 
@@ -156,7 +157,7 @@ I3 <- inla(BU_TOT.l ~ TOT_POP+ Forest + Precip_mm,
 I3$dic$dic
 ```
 
-Finally, lets predict from our model!
+Finally, lets predict from our model! Our terrible model...
 
 First, we can predict from the lm using the "by hand" approach rather than predict
 
@@ -236,14 +237,14 @@ We can now extract these and plot
 FIT <- I4$summary.fitted.values[296:395,] #the 100 extra roes we added
 
 # And add the relevant pieces to MyData 
-newdat$mu    <- FIT[,"mean"]       #Fitted values
-newdat$selow <- FIT[,"0.025quant"] #Lower bound
-newdat$seup  <- FIT[,"0.975quant"] #Upper bound
+newdat2$mu    <- FIT[,"mean"]       #Fitted values
+newdat2$selow <- FIT[,"0.025quant"] #Lower bound
+newdat2$seup  <- FIT[,"0.975quant"] #Upper bound
 
 ggplot()+geom_point(data = bu, aes( Forest, BU_TOT.l)) +
   xlab("Forest cover")+ylab("Log BU cases") +
-  geom_line(data = newdat, aes(Forest, mu )) +
-  geom_ribbon(data = newdat, aes(Forest, ymax = seup, ymin = selow), fill = "red", alpha = 0.4) +
+  geom_line(data = newdat2, aes(Forest, mu )) +
+  geom_ribbon(data = newdat2, aes(Forest, ymax = seup, ymin = selow), fill = "red", alpha = 0.4) +
   theme_classic()
 
 ```
@@ -251,6 +252,73 @@ ggplot()+geom_point(data = bu, aes( Forest, BU_TOT.l)) +
 Exactly the same as before, therefore with using default priors (which are diffuse), we get the same result as the frequentist approach
 
 
+Method 2. make.lincombs version
+
+Previously we added extra data, but INLA also has helper functions to calculate linear combinations - inla.make.lincombs. This should produce similar (although not necessarily the same) results.
+
+First wwe create a grid of covariates,
+then make a design matrix using the model.matrix function
+run the model with the inla.make.lincombs function
+visualise the results 
 
 
+```{r}
+newdat3<-data.frame(TOT_POP = rep(mean(bu$TOT_POP),100), Forest = seq(from = min(bu$Forest), to = max(bu$Forest),length.out = 100),Precip_mm = rep(mean(bu$Precip_mm),100))
+
+
+# convertto a design matrix.
+X    <- model.matrix(~ TOT_POP + Forest + Precip_mm, data = newdat)
+X<-as.data.frame(X)
+lincomb <- inla.make.lincombs(X)
+
+#rerun inla with the make.lincombs included
+I4b <- inla(BU_TOT.l ~ TOT_POP + Forest + Precip_mm,
+           lincomb = lincomb,
+           control.inla = list(
+                 lincomb.derived.only = FALSE),
+           control.predictor = list(
+                  compute = TRUE, 
+                  quantiles = c(0.025, 0.975)),
+           data = bu)
+
+# The relevant output is now in: $summary.lincomb
+head(I4b$summary.lincomb)
+dim(I4b$summary.lincomb)
+dim(X)
+
+
+newdat3 <- cbind(newdat3, 
+           I4b$summary.lincomb[, c("mean", 
+                                  "0.025quant", 
+                                  "0.975quant")])
+head(newdat3)
+
+#rename and get ready to plot
+names(newdat3)[names(newdat3)=="0.975quant"] <- "Hi"
+names(newdat3)[names(newdat3)=="0.025quant"] <- "Lo"
+
+ggplot()+geom_point(data = bu, aes( Forest, BU_TOT.l)) +
+  xlab("Forest cover")+ylab("Log BU cases") +
+  geom_line(data = newdat3, aes(Forest, mean )) +
+  geom_ribbon(data = newdat3, aes(Forest, ymax = Hi, ymin = Lo), fill = "red", alpha = 0.4) +
+  theme_classic()
+
+#looks the same!
+
+```
+
+
+plot all together
+
+```{r}
+ggplot()+geom_point(data = bu, aes( Forest, BU_TOT.l)) +
+  xlab("Forest cover")+ylab("Log BU cases") +
+  geom_line(data = newdat3, aes(Forest, mean )) +
+  geom_ribbon(data = newdat3, aes(Forest, ymax = Hi, ymin = Lo), fill = "red", alpha = 0.4) +
+  geom_line(data = newdat2, aes(Forest, mu )) +
+  geom_ribbon(data = newdat2, aes(Forest, ymax = seup, ymin = selow), fill = "blue", alpha = 0.4)+geom_line(data = newdat, aes(Forest, mu )) +
+  geom_ribbon(data = newdat, aes(Forest, ymax = seup, ymin = selow), fill = "green", alpha = 0.4) +
+  theme_classic()
+```
+Basically all three predictions are the same, and as the priors are diffuse the predictions are the same as the linear model
 

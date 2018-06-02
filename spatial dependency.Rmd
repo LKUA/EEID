@@ -3,14 +3,21 @@ title: "Spatial dependency in INLA"
 output: html_notebook
 ---
 
-So far we have completely ignored the spatial structure in our data, but this is bad. Sites that are close to eachother may just be more similar (especially for an environmental pathogen like BU)
+So far we have completely ignored the spatial structure in our data, but this is bad. Sites that are close to eachother may just be more similar (Toblers law;especially for an environmental pathogen like BU)
 
 
 
-```{r}
+```{r, echo = FALSE, include = FALSE}
 library(tidyverse)
 library(INLA)
 library(sp)
+library(ggmap)
+library(mapdata)
+library(gstat)
+library(fields)
+library(maptools)
+library(viridis)
+detach("package:purrr", unload=TRUE)
 
 bu<-read_csv("template_BU.csv")
 bu$Random<-NA
@@ -34,6 +41,12 @@ bu$Y.utm <- XY.utm[,2]
 
 
 
+
+```
+
+
+
+```{r, echo = FALSE}
 glgmap   <- get_map(location = c(min(range(bu$Long)), min(range(bu$Lat)), max(range(bu$Long)), max(range(bu$Lat))),
                     zoom = 7,
                     maptype= "terrain")        
@@ -57,6 +70,7 @@ points(x = bu$Long,
 
 ```
 
+
 If you are not online you can use the bottom option for a plain outline rather than the ggmap approach.
 
 #Spatial dependency
@@ -73,7 +87,7 @@ f10 <- BU_TOT ~ Forest +  MeanNDVI + MeanTemp + ShrGra
 
 TOT_POP<-bu$TOT_POP #our n trials
 
-I10 <- inla(f9,
+I10 <- inla(f10,
            family = "binomial",
            control.compute = list(dic = TRUE, waic = TRUE),
            control.predictor = list(compute = TRUE),
@@ -127,8 +141,8 @@ Lets do that!
 First, we rewrite our model:
 
 BU_TOT_i ~ Bin(P_i,N_i)
-E(BU_i) = N_i*P_i (Number of trials * probability of event) + u_i 
-var(BU_i) = N_i*P_i*(1-P_i)
+E(BU_i) = N_i * P_i (Number of trials * probability of event) + u_i   
+var(BU_i) = N_i * P_i * (1-P_i)
 
 P_i = exp(Covariates) / 1+exp(Covariates)
 
@@ -152,7 +166,7 @@ loc = coordinates of your observations
 
 max.edge - the largest allowed triangle length (larger the edge length, the lower the accuracy / resolution of the mesh). Can define an inner and an outer region by including a vector of two edge lengths. Good idea to deal with boundary issues - make the outer boundary larger than the inner boundary to reduce computing costs. This is defined through offset.
 
-There are many options - read the Marta book. Including a boundary for example means that you can use a shapefile to restrict your mesh (ie if you are along a coastline). We wont cover this, but it is possible
+There are many options - Blangiardo and Cameletti (2015) has nice details about this. For example, including a boundary means that you can use a shapefile to restrict your mesh (ie if you are along a coastline). We wont cover this, but it is possible. Zuur, Saveliev and Ieno 2017 covers this.
 
 1. Define a mesh
 
@@ -211,7 +225,7 @@ c(mesh1$n, mesh2$n, mesh3$n, mesh4$n, mesh5$n, mesh6$n,
 ```
 
 
-First few are waaay to dense - that would really up your computing time, around 700 ish points is ok. The best one is actually the middle one - the grid inside the boundary is well defined while the outside one has larger triangles. a cutoff of 1k between our sites seems reasonable. Good idea is to test models with a mesh of around 700 n and then do th efinal model with a mesh of say 3000 n to get a finer predictive surface
+First few are waaay to dense - that would really up your computing time, around 700 ish points is ok. The best one is actually the middle one - the grid inside the boundary is well defined while the outside one has larger triangles. a cutoff of 1k between our sites seems reasonable. Good idea is to test models with a mesh of around 700 n and then do the final model with a mesh of say 3000 n to get a finer predictive surface
 
 We have our mesh. Mesh 5. Next step = projector matrix
 
@@ -226,17 +240,17 @@ Next step - Define the SPDE
 
 Priors appear again here!
 
-spde5 <- inla.spde2.pcmatern(mesh5, prior.range = c(300 * 1000, 0.05), prior.sigma = c(.5, .5))
+These are penalised complexity priors
 
-prior.range is the estimated distance over which you think correlation count be occuring. How far does your study pathogen move? Its in metres so the below example gives an estiamte of the range as 300m with a variance of 0.95 ie we are pretty confident that the range is larger than b
+prior.range is the estimated distance over which you think correlation could be occuring. How far does your study pathogen / species move? Its in metres so the below example gives an estiamte of the range as 300m with a variance of 0.95, therefore we are pretty confident that the range is larger than b
 
 ie: prior.range = c(a,b) means P(Range < a)= b
 
 so in our example, P(Range < 300m) = 0.05
 
-This seems unlikely from what we know, so we should drop that down to a more reasonable point. 
+This seems unlikely from what we know, so we should drop that down to a more reasonable distance 
 
-prior.sigma is diffuse in this example
+prior.sigma is diffuse in this example (.5)
 
 ```{r}
 spde5 <- inla.spde2.pcmatern(mesh5, prior.range = c(50 * 1000, 0.05), prior.sigma = c(.5, .5))
@@ -251,13 +265,13 @@ w5.index <- inla.spde.make.index('w', n.spde = spde5$n.spde)
 
 ```
 
-Next we define the stack. This is especially useful if you are trying to keep track of more complex models. again do by default is best. We do this to tell INLA at which sample locations we have data for the response variable and where we have the covariate data, so that we can calculate the posterior mean.
+Next we define the stack. This is especially useful if you are trying to keep track of more complex models, so although for simple models it is not necessary, it is best to just do by default. again do by default is best. We do this to tell INLA at which sample locations we have data for the response variable and where we have the covariate data, so that we can calculate the posterior mean.
 
 For the binomial model we have an extra variable - the number of trials. We need to include this in the data bit with the response variable
 
 ```{r}
 # Make the X matrix (-1 means remove the intercept)
-Xm <- model.matrix(~ -1 + Forest + MeanNDVI + MeanTemp + ShrGra +TOT_POP, 
+Xm <- model.matrix(~ -1 + Forest + MeanNDVI + MeanTemp + ShrGra, 
                    data = bu)
 head(Xm)
 colnames(Xm)
@@ -269,9 +283,7 @@ N <- nrow(bu)
 X <- data.frame(Forest           = Xm[,1],
                 MeanNDVI         = Xm[,2],
                 MeanTemp         = Xm[,3],
-                ShrGra           = Xm[,4],
-                TOT_POP          = Xm[,5]
-                )
+                ShrGra           = Xm[,4])
 head(X)
 colnames(X)
 dim(X)
@@ -317,6 +329,8 @@ I11a <- inla(f11a,
 summary(I11a)
 
 # And this is the model with the spatial field
+
+
 I11b <- inla(f11b,
              family = "binomial", 
              data=inla.stack.data(StackFit),
@@ -332,7 +346,7 @@ c(I11a$dic$dic, I11b$dic$dic)
 
 Note the far longer computing time for the model with the spatial fields!
 
-But - what an improvement in the DIC. Including teh spatial variation is important!
+But - what an improvement in the DIC. Including the spatial variation is important!
 
 Lets do a coef plot of both of them
 
@@ -356,7 +370,7 @@ coefplot.inla(I11b)
 Wider confidence intervals - is what you would expect as you are now taking into account variance associated with distance
 
 To consider = Did we have our range right? 
-SHould we use a finer mesh?
+Should we use a finer mesh?
 
 Lets start by looking at kappa, the estimated spatial autocorrelation
 
@@ -379,14 +393,16 @@ Range <- inla.emarginal(function(x) x,
 Kappa
 Sigma.u
 Range 
+
+
 ```
 
 Range estimate from our model is 11094m so 11.09 km is the range over which spatial correlation decreases. Quite different from 50km
 
-So although there is spatial correlation it acts over quite a small distnace
+So although there is spatial correlation it acts over quite a small distance. Maybe what we would expect for an environmental pathogen
 
 ```{r}
-#Code from Zuur book
+#Code from Zuur et al. (2017)
 
 LocMesh <- mesh5$loc[,1:2]
 
@@ -415,11 +431,10 @@ Shows the distance over which correlation is occuring quite nicely. We have stro
 
 We can extract posterior distribtions for all the w's and plot them
 
-Inla (courtesy of code from H. Blakka and Zuur) has a way of doing this. Nb if you do the Zuur course you will see lots of more beautiful, fancy ways of doing these graphs ;)
+Inla (courtesy of code from H. Bakka and Zuur) has a way of doing this. Nb if you do the Zuur course you will see lots of more beautiful, fancy ways of doing these graphs ;)
 
 ```{r}
-w.pm <- I11b$summary.random$w$mean  #extract your ws
-length(w.pm)
+
 
 Coast.Coord <- cbind(CoastPoly$x, CoastPoly$y)
 Coast.Poly  <- Polygon(Coast.Coord, hole = FALSE)
@@ -428,43 +443,24 @@ CoastSP@proj4string  <- CRS("+proj=longlat +datum=WGS84")
 plot(CoastSP)
 
 Coast.UTM <- spTransform(CoastSP,   
-                         CRS("+proj=utm +zone=29 +south ellps=WGS84 +datum=WGS84"))
+                         CRS("+proj=utm +zone=31N +south ellps=WGS84 +datum=WGS84"))
 #Outline of Benin in m
+w.pm <- I11b$summary.random$w$mean  #extract your ws
+length(w.pm)
 
+xlim<-Coast.UTM@bbox[1, ]
+ylim<-Coast.UTM@bbox[2, ]
 
-# This function is modified code from material on Haakon Bakka's website
-# We will not explain what is inside this function. Just run it.
-PlotField <- function(field, mesh, ContourMap, xlim, ylim, Add=FALSE, ...){
+local.plot.field = function(field, mesh, xlim, ylim){
   stopifnot(length(field) == mesh$n)
-  # Plotting region to be the same as the study area polygon
-  if (missing(xlim)) xlim <- ContourMap@bbox[1, ] 
-  if (missing(ylim)) ylim <- ContourMap@bbox[2, ]
-  
-  # inla.mesh.projector: it creates a lattice using the mesh and specified ranges. 
-  proj <- inla.mesh.projector(mesh, 
-                              xlim = xlim, 
-                              ylim = ylim, 
-                              dims = c(300, 300))
-  # The function inla.mesh.project can then 
-  # be used to project the w's on this grid.
-  field.proj <- inla.mesh.project(proj, field)
-  
-  # And plot the whole thing
-  image.plot(list(x = proj$x, 
-                  y = proj$y,
-                  z = field.proj), 
-             xlim = xlim, 
-             ylim = ylim,
-             asp = 1,
-             add = Add,
-             ...)  
+  proj = inla.mesh.projector(mesh)
+  field.proj = inla.mesh.project(proj, field)
+  n.col = 20
+  image.plot(list(x = proj$x, y=proj$y, z = field.proj), 
+             xlim = xlim, ylim = ylim, col = plasma(n.col), nlevel=n.col+1)
 }
 
-
-
-
-# Plot the spatial random field 
-PlotField(field = w.pm, mesh = mesh5, ContourMap = Coast.UTM)
+local.plot.field(w.pm, mesh5, xlim, ylim)
 
 # Add the sampling locations (in UTM)
 points(x = Loc[,1],
@@ -476,4 +472,438 @@ points(x = Loc[,1],
 # Add the coastline (in UTM)
 plot(Coast.UTM , add = TRUE)
 ```
+
+Spatial correlation for BU cases in Benin. Therefore, some covariate maybe that we didnt measure that would explain clustering of cases. This is a binomial model, so it suggests that the probability of being infected with BU is 29 times higher in these areas compared to the dark blue areas. Now need to speculate as to what could be causing that.
+
+Are there still patterns in the residuals?
+
+```{r}
+xy     <- cbind(bu$X.utm, bu$Y.utm)
+u.proj <- inla.mesh.projector(mesh5, loc = Loc)
+u.pm   <- inla.mesh.project(u.proj, I11b$summary.random$w$mean)
+
+# Use different font sizes and symbols dependening on the 
+# values of u.pm
+MyCex <- 2 * abs(u.pm) / max(u.pm)
+SignResidual <- as.numeric(u.pm >=0) + 1
+
+local.plot.field(w.pm, mesh5, xlim, ylim)
+
+points(xy, 
+       pch = c(16,17)[SignResidual], 
+       cex = MyCex)
+# Add the coastline (in UTM)
+plot(Coast.UTM , add = TRUE)
+```
+
+Still appears to be correlation in the residuals. Strong east to west gradient. Not sure what happens along here?
+Could be related to some kind of industry or agriculture?
+
+Finally, what is the extent of the spatial correlation?
+
+```{r}
+plot(Coast.UTM, axes = TRUE)
+points(x = 385000, y = 791248, col = 1, pch = 16, cex = 2)
+# How far does the correlation from this point reach?
+
+#This could be a nice approach to look at how spatial correlation of infection probability decays from these points and compare to the spatial networks 
+
+
+# How many of these points are affected?
+points(x = Loc[,1],
+       y = Loc[,2], 
+       cex = 0.5, 
+       col = "black", 
+       pch = 16)
+
+
+# This function is taken from:
+# https://haakonbakka.bitbucket.io/btopic105.html
+# We will not discuss what is in it.
+local.find.correlation = function(Q, location, mesh) {
+  sd = sqrt(diag(inla.qinv(Q)))
+  # - the marginal standard deviations
+  A.tmp = inla.spde.make.A(mesh=mesh, loc = matrix(c(location[1], location[2]),1,2))
+  # - create a fake A matrix, to extract the closest mesh node index
+  id.node = which.max(A.tmp[1, ])
+  # - index of the closest node
+  print(paste('The location used was c(', 
+              round(mesh$loc[id.node, 1], 4), ', ', 
+              round(mesh$loc[id.node, 2], 4), ')' ))
+  # - location of the closest node
+  # - should be close to the location input
+  # - sometimes used to plot a black dot
+  ## Solve a matrix system to find the column of the covariance matrix
+  Inode = rep(0, dim(Q)[1]); Inode[id.node] = 1
+  covar.column = solve(Q, Inode)
+  corr = drop(matrix(covar.column)) / (sd*sd[id.node])
+  return(corr)
+}
+
+
+
+
+Q <- inla.spde2.precision(spde5, 
+                          theta = c(log(Range ),log(Sigma.u)))
+
+Corr <- local.find.correlation(Q, 
+                               loc = c(385000, 791248), 
+                               mesh5)
+#It will find the closest point on the mesh:
+points(x = 479940.7739, y = 5973712.5778, col = 2, pch = 16, cex = 2)
+
+
+# And the rest is a matter of plotting
+local.plot.field(Corr,mesh5, xlim, ylim )
+
+plot(Coast.UTM, axes = TRUE, add = TRUE)
+
+
+points(x = Loc[,1],
+       y = Loc[,2],
+       cex = 0.5, 
+       col = "black", 
+       pch = 16)
+
+
+```
+
+Shows the points that are affected by the correlation from one point.
+
+Note, we still havent checked residuals, made sure there are no patterns etc. We havent really covered this and wont have time but of course, this is a really important part of model checking.
+
+Also, our plots are rather ugly. But there is lots of scope for improvement - eg. removing the sea etc.
+
+Finally, just going to check the residuals to see how the spatial autocorrelation looks now
+
+```{r}
+Pi   <- I11b$summary.fitted.values[1:295,"mean"] #just want the fitted values for our observations
+ExpY <- Pi * bu$TOT_POP
+VarY <- bu$TOT_POP * Pi * (1 - Pi) 
+E1   <- (bu$BU_TOT - ExpY) / sqrt(VarY)
+
+#do a bubble plot. 
+dat<-data.frame(bu$Long,bu$Lat,resids=E1)
+coordinates(dat)<-c('bu.Long','bu.Lat')
+bubble(dat,zcol='resids')
+
+#plot fitted against residuals
+plot(Pi~E1)
+
+#variogram
+var.mod<-variogram(resids~1,data=dat,alpha=c(0,45,90,135))
+plot(var.mod) 
+```
+
+Its a lot better - look at the difference in the numbers. Still looks like there is something we havent dealt with however - the fitted vs residuals plot is pretty awful. Want a nice, flat plot for the variogram but it still shows some sign on east-west correlation
+
+#Large scale autocorrelation
+
+Matern correlation is only appropriate over short distances. However, what if we are interested in spatial correlation over larger distances as well (maybe your organism of interest moves really far)
+
+Solution: Include long distance spatial autocorrelation as x,y coordinates as fixed effects.
+
+To do this, we need to make a new dataframe for the stack, and include longitude and latitude as an interaction
+
+```{r}
+# Make the X matrix (-1 means remove the intercept)
+Xm <- model.matrix(~ -1 + Forest + MeanNDVI + MeanTemp + ShrGra + Lat + Long + Lat*Long, 
+                   data = bu)
+head(Xm)
+colnames(Xm)
+
+# Define sample size
+N <- nrow(bu)
+
+# This is the X matrix
+X <- data.frame(Forest           = Xm[,1],
+                MeanNDVI         = Xm[,2],
+                MeanTemp         = Xm[,3],
+                ShrGra           = Xm[,4],
+                Lat              = Xm[,5],
+                Long             = Xm[,6],
+                Lat.Long         = Xm[,7])
+head(X)
+colnames(X)
+dim(X)
+
+
+
+StackFit <- inla.stack(
+  tag = "Fit",
+  data = list(y = bu$BU_TOT, Ntrials = bu$TOT_POP),  
+  A = list(1, 1, A5),                  
+  effects = list(   
+    Intercept = rep(1, N), #intercept included to use without covariates so can only see contribution from spatial covariates
+    X = X,
+    w = w5.index))
+
+f11c <- y ~ -1 + Intercept + 
+  Forest  + MeanNDVI + MeanTemp + 
+  ShrGra + Lat*Long+
+  f(w, model = spde5)
+
+
+I11c <- inla(f11c,
+             family = "binomial", 
+             data=inla.stack.data(StackFit),
+             control.compute = list(dic = TRUE),
+             control.predictor = list(A = inla.stack.A(StackFit)),
+             Ntrials = Ntrials)
+
+
+```
+
+Interaction plot is much much slower....
+
+Will do the residual plots and compare DICs to see whether including large scale spatial correlaton has helped
+
+```{r}
+SpatField.w <- inla.spde2.result(inla = I11c,
+                                 name = "w",
+                                 spde = spde5,
+                                 do.transfer = TRUE)
+
+Kappa <- inla.emarginal(function(x) x, 
+                        SpatField.w$marginals.kappa[[1]] )
+
+Sigma.u <- inla.emarginal(function(x) sqrt(x), 
+                          SpatField.w$marginals.variance.nominal[[1]] )
+
+Range <- inla.emarginal(function(x) x, 
+                        SpatField.w$marginals.range.nominal[[1]] )
+
+Kappa
+Sigma.u
+Range 
+
+c(I11a$dic$dic, I11b$dic$dic,I11c$dic$dic)
+
+
+Pi   <- I11c$summary.fitted.values[1:295,"mean"] #just want the fitted values for our observations
+ExpY <- Pi * bu$TOT_POP
+VarY <- bu$TOT_POP * Pi * (1 - Pi) 
+E1   <- (bu$BU_TOT - ExpY) / sqrt(VarY)
+
+#do a bubble plot. 
+dat<-data.frame(bu$Long,bu$Lat,resids=E1)
+coordinates(dat)<-c('bu.Long','bu.Lat')
+bubble(dat,zcol='resids')
+
+#plot fitted against residuals
+plot(Pi~E1)
+
+#variogram
+var.mod<-variogram(resids~1,data=dat,alpha=c(0,45,90,135))
+plot(var.mod) 
+
+#Outline of Benin in m
+w.pm <- I11c$summary.random$w$mean  #extract your ws
+length(w.pm)
+
+xlim<-Coast.UTM@bbox[1, ]
+ylim<-Coast.UTM@bbox[2, ]
+
+local.plot.field = function(field, mesh, xlim, ylim){
+  stopifnot(length(field) == mesh$n)
+  proj = inla.mesh.projector(mesh)
+  field.proj = inla.mesh.project(proj, field)
+  n.col = 20
+  image.plot(list(x = proj$x, y=proj$y, z = field.proj), 
+             xlim = xlim, ylim = ylim, col = plasma(n.col), nlevel=n.col+1)
+}
+
+local.plot.field(w.pm, mesh5, xlim, ylim)
+
+# Add the sampling locations (in UTM)
+points(x = Loc[,1],
+       y = Loc[,2], 
+       cex = 0.5, 
+       col = "black", 
+       pch = 16)
+
+# Add the coastline (in UTM)
+plot(Coast.UTM , add = TRUE)
+```
+
+DIC is a lot worse, so over complicating the mdoel by adding in the large scale correlation factor didnt improve the model. Good because it took a long time!
+Finally, we need to interpret and predict from this model.
+
+Interpretation: Going with model b
+
+```{r}
+#first extract the betas
+
+Betas11b <- I11b$summary.fixed
+print(Betas11b, digits = 2)
+
+#Have a think about what this means - your estimate is your slope for your betas
+
+#####
+# TASK: Write down the equation for the fitted model.
+# pH_i ~ N(mu_i, sigma^2)
+
+# NonForest:
+# mu_i = 9.14 - 0.35 * Alt_i - 0.02 * SDI_i
+
+# Forested:
+# mu_i = 9.14 - 1.03 - 0.35 * Alt_i + 0.53 * Alt_i -0.02 * SDI_i
+#      = 8.11 + (Something) * Alt_i - 0.02 * SDI_i
+
+
+
+#If the model was gaussian you could extract the sigmas as below but its binomial
+#
+# tau <- model$marginals.hyperpar$`Precision for the Gaussian observations`
+# sigma <- inla.emarginal(function(x) (1/sqrt(x)), tau)
+# sigma
+
+coefplot.inla(I11a)
+coefplot.inla(I11b)
+coefplot.inla(I11c)
+```
+
+
+For prediction: Two approaches -  We will use teh first method - creating a load of NA data, and predicting that.
+
+Predict with the stack:
+
+First we need to get the stack for original data, make a new stack which is what we want to predict, and then combine them
+
+We need to rerun the first stack unless you didnt run the last model, so just need to create the second one
+
+Rerun the first one below
+
+```{r}
+# Make the X matrix (-1 means remove the intercept)
+Xm <- model.matrix(~ -1 + Forest + MeanNDVI + MeanTemp + ShrGra, 
+                   data = bu)
+head(Xm)
+colnames(Xm)
+
+# Define sample size
+N <- nrow(bu)
+
+# This is the X matrix
+X <- data.frame(Forest           = Xm[,1],
+                MeanNDVI         = Xm[,2],
+                MeanTemp         = Xm[,3],
+                ShrGra           = Xm[,4])
+head(X)
+colnames(X)
+dim(X)
+
+
+
+StackFit <- inla.stack(
+  tag = "Fit",
+  data = list(y = bu$BU_TOT, Ntrials = bu$TOT_POP),  
+  A = list(1, 1, A5),                  
+  effects = list(   
+    Intercept = rep(1, N), #intercept included to use without covariates so can only see contribution from spatial covariates
+    X = X,
+    w = w5.index))
+```
+
+Now we need to make the predictive stack, whic means making the new covariates
+```{r}
+# Sketching the fitted values of the model. 
+
+newdat<-data.frame( 
+  Forest    = seq(min(bu$Forest), max(bu$Forest), length = 100),
+  MeanNDVI       = rep(mean(bu$MeanNDVI), length = 100),
+  MeanTemp  = rep(mean(bu$MeanTemp), length = 100),
+  ShrGra =  rep(mean(bu$ShrGra), length = 100))
+
+
+# And this is the corresponding X matrix
+Xmm <- model.matrix(~ -1 + Forest + MeanNDVI + MeanTemp +
+                      ShrGra, 
+                    data = newdat)
+head(Xmm)
+
+Xp <- data.frame(Forest       = Xmm[,1],
+                 MeanNDVI          = Xmm[,2],
+                 MeanTemp        = Xmm[,3],
+                 ShrGra = Xmm[,4]
+)
+
+StackCov <- inla.stack(
+  tag = "Covariates",
+  data = list(y = NA),  #include data as an NA 
+  A = list(1, 1),                  
+  effects = list(
+    Intercept = rep(1, nrow(Xp)),
+    Xp = Xp)) 
+
+#dont include a spatial field because we want the predictions for the covariates and the intercept.  Noe that data is now NA, so INNLA will predict this
+# We can combine the two stacks.         
+All.stacks <- inla.stack(StackFit, StackCov)	              
+
+
+```
+
+
+
+Now run the model with the combined stack
+
+```{r}
+f11p <- y ~ -1 + Intercept + 
+  Forest  + MeanNDVI + MeanTemp + 
+  ShrGra + 
+  f(w, model = spde5)
+I11p <- inla(f11p,
+             family = "binomial", 
+             data=inla.stack.data(All.stacks),
+             control.compute = list(dic = TRUE),
+             control.predictor = list(compute = TRUE,
+                                      A = inla.stack.A(All.stacks)),
+             Ntrials = Ntrials)
+
+
+```
+
+
+Now want to extract the predictions, so need to index the stacks to get the predicted data rather than the fitted data
+
+```{r}
+index.Fit <- inla.stack.index(All.stacks,
+                              tag = "Fit")$data
+
+index.Cov <- inla.stack.index(All.stacks,
+                              tag = "Covariates")$data
+
+#And we can extact the correct rows     
+I11p.fit  <- I11p$summary.fitted.values[index.Fit, c(1,3,5)]  #210  by 3
+I11p.pred <- I11p$summary.fitted.values[index.Cov, c(1,3,5)]  #1250 by 3
+
+# It is the second one we need as these are for the
+# artificial covariate values.
+# Add them to the MyData object.
+newdat2 <- cbind(newdat, I11p.pred)
+dim(newdat2)
+colnames(newdat2)
+
+#Finally, plot the predictions and the raw data
+names(newdat2)[names(newdat2)=="0.975quant"] <- "Hi"
+names(newdat2)[names(newdat2)=="0.025quant"] <- "Lo"
+
+#backtransform as binomial uses the log link
+#Convert logits to probability
+logit2prob <- function(logit){
+  odds <- exp(logit)
+  prob <- odds / (1 + odds)
+  return(prob)
+}
+newdat2$MeanE<-logit2prob(newdat2$mean); newdat2$HiE <- logit2prob(newdat2$Hi); newdat2$LoE<-logit2prob(newdat2$Lo)
+
+#plot the predictions
+
+ggplot()+geom_point(data=bu,aes(Forest, BU_TOT/TOT_POP))+geom_line(data = newdat2,aes(Forest, MeanE))+geom_ribbon(data = newdat2, aes(Forest, ymin =LoE,  ymax =HiE), fill = "aquamarine", alpha = 0.4)+xlab("Percentage forest cover")+ylab("Probability of BU")+theme_classic()
+
+ggplot()+geom_line(data = newdat2,aes(Forest, MeanE))+geom_ribbon(data = newdat2, aes(Forest, ymin =LoE,  ymax =HiE), fill = "aquamarine", alpha = 0.4)+xlab("Percentage forest cover")+ylab("Probability of BU")+theme_classic()
+```
+
+We predict a significant decrease in the probability of BU in villages with a greater proportion of forest around them. However, compared to the raw data, our model doesnt do a great job of capturing the variability (and the residuals still looked pretty bad so in real life we would not be using this model)
+
 
